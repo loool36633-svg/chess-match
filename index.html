@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Шахматная игра</title>
+<style>
+* { box-sizing: border-box; }
+body {
+    margin: 0;
+    font-family: Arial, sans-serif;
+    background: #f1efff;
+    color: #292344;
+    text-align: center;
+}
+header {
+    background: #7561cf;
+    color: white;
+    padding: 22px;
+}
+main {
+    max-width: 600px;
+    margin: 25px auto;
+    padding: 15px;
+}
+#board {
+    display: grid;
+    grid-template-columns: repeat(8, 1fr);
+    width: 100%;
+    max-width: 480px;
+    margin: 20px auto;
+    border: 5px solid #51458b;
+}
+.cell {
+    aspect-ratio: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: clamp(24px, 6vw, 46px);
+    cursor: pointer;
+}
+.light { background: #f4dfbd; }
+.dark { background: #a77b59; }
+.selected { background: #a8d8a0 !important; }
+button {
+    border: 0;
+    border-radius: 8px;
+    padding: 11px 18px;
+    margin: 5px;
+    background: #7561cf;
+    color: white;
+    cursor: pointer;
+    font-size: 15px;
+}
+#message { min-height: 24px; font-weight: bold; }
+.history {
+    background: white;
+    padding: 15px;
+    border-radius: 10px;
+    margin: 15px auto;
+    text-align: left;
+    max-width: 480px;
+}
+
+.history h3 {
+    margin-top: 0;
+    color: #7561cf;
+}
+
+#history {
+    line-height: 1.8;
+    overflow-wrap: anywhere;
+}
+</style>
+</head>
+<body>
+<header>
+    <h1>Шахматная игра</h1>
+    <p>Играй в шахматы против другого игрока</p>
+</header>
+
+<main>
+    <p id="turn">Загрузка партии...</p>
+    <div id="board"></div>
+    <p id="message">Подключение к серверу...</p>
+    <div class="history">
+    <h3>История ходов</h3>
+    <p id="history">Пока ходов нет</p>
+</div>
+    <button onclick="newGame()">Новая партия</button>
+</main>
+
+<script>
+const API = "http://localhost:3000/api/chess";
+let gameId = "";
+let selected = -1;
+let board = [];
+
+const symbols = {
+    K: "♔", Q: "♕", R: "♖", B: "♗", N: "♘", P: "♙",
+    k: "♚", q: "♛", r: "♜", b: "♝", n: "♞", p: "♟"
+};
+
+async function newGame() {
+    try {
+        const response = await fetch(API + "/new", { method: "POST" });
+        const data = await response.json();
+
+        if (!response.ok) throw new Error(data.error || "Не удалось создать партию");
+
+        gameId = data.gameId;
+        selected = -1;
+        await getState();
+        document.getElementById("message").textContent = "Новая партия создана!";
+    } catch (error) {
+        document.getElementById("message").textContent =
+            "Ошибка подключения: " + error.message;
+    }
+}
+
+async function getState() {
+    const response = await fetch(API + "/state/" + gameId);
+    const data = await response.json();
+
+    if (!response.ok) throw new Error(data.error || "Не удалось получить состояние");
+
+    board = [];
+    const rows = data.fen.split(" ")[0].split("/");
+
+    rows.forEach(row => {
+        for (const char of row) {
+            if (Number(char)) {
+                for (let i = 0; i < Number(char); i++) board.push("");
+            } else {
+                board.push(char);
+            }
+        }
+    });
+
+    document.getElementById("turn").textContent =
+        data.turn === "w" ? "Ход белых" : "Ход чёрных";
+        const moves = data.history || [];
+
+let historyText = "";
+
+for (let i = 0; i < moves.length; i += 2) {
+    historyText += (i / 2 + 1) + ". " + moves[i];
+
+    if (moves[i + 1]) {
+        historyText += " " + moves[i + 1];
+    }
+
+    historyText += "   ";
+}
+
+document.getElementById("history").textContent =
+    historyText || "Пока ходов нет";
+
+    if (data.isGameOver) {
+        document.getElementById("message").textContent =
+            "Партия завершена!";
+    }
+
+    drawBoard();
+}
+
+function drawBoard() {
+    const element = document.getElementById("board");
+    element.innerHTML = "";
+
+    board.forEach((piece, i) => {
+        const cell = document.createElement("div");
+        cell.className = "cell " +
+            ((Math.floor(i / 8) + i % 8) % 2 ? "dark" : "light");
+
+        if (i === selected) cell.classList.add("selected");
+
+        cell.textContent = symbols[piece] || "";
+        cell.onclick = () => clickCell(i);
+        element.appendChild(cell);
+    });
+}
+
+async function clickCell(i) {
+    if (!gameId) return;
+
+    if (selected === -1) {
+        if (!board[i]) return;
+        selected = i;
+        drawBoard();
+        return;
+    }
+
+    if (selected === i) {
+        selected = -1;
+        drawBoard();
+        return;
+    }
+
+    const from = "abcdefgh"[selected % 8] + (8 - Math.floor(selected / 8));
+    const to = "abcdefgh"[i % 8] + (8 - Math.floor(i / 8));
+
+    try {
+        const response = await fetch(API + "/move", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ gameId, from, to })
+        });
+
+        const data = await response.json();
+        selected = -1;
+
+        if (!response.ok) {
+            document.getElementById("message").textContent =
+                data.error || "Недопустимый ход";
+            drawBoard();
+            return;
+        }
+
+        await getState();
+        document.getElementById("message").textContent = "Ход выполнен!";
+    } catch (error) {
+        selected = -1;
+        document.getElementById("message").textContent =
+            "Ошибка: " + error.message;
+        drawBoard();
+    }
+}
+
+newGame();
+</script>
+</body>
+</html>
